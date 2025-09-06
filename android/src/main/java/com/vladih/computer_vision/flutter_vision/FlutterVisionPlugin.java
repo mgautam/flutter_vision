@@ -3,10 +3,12 @@ package com.vladih.computer_vision.flutter_vision;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 
 import com.vladih.computer_vision.flutter_vision.models.Yolo;
+import com.vladih.computer_vision.flutter_vision.models.Yolo11;
 import com.vladih.computer_vision.flutter_vision.models.Yolov8;
 import com.vladih.computer_vision.flutter_vision.models.Yolov5;
 import com.vladih.computer_vision.flutter_vision.models.Yolov8Seg;
@@ -20,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.plugin.common.BinaryMessenger;
@@ -29,237 +32,380 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 
 /**
- * FlutterVisionPlugin
+ * FlutterVisionPlugin - Enhanced with YOLO11 support and improved error handling
  */
 public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
+    private static final String TAG = "FlutterVisionPlugin";
     private static final String CHANNEL_NAME = "flutter_vision";
+    private static final String SUPPORTED_VERSIONS = "yolov5, yolov8, yolov8seg, yolo11";
+    
     private MethodChannel methodChannel;
     private Context context;
     private FlutterAssets assets;
     private Yolo yolo_model;
-
     private ExecutorService executor;
-
-    private boolean isDetecting = false;
-
-    private static ArrayList<Map<String, Object>> empty = new ArrayList<>();
+    
+    private final AtomicBoolean isDetecting = new AtomicBoolean(false);
+    private static final ArrayList<Map<String, Object>> EMPTY_RESULT = new ArrayList<>();
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
+        Log.d(TAG, "FlutterVisionPlugin attached to engine");
         setupChannel(binding.getApplicationContext(), binding.getFlutterAssets(), binding.getBinaryMessenger());
     }
 
     @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
-        try {
-            this.context = null;
-            this.methodChannel.setMethodCallHandler(null);
-            this.methodChannel = null;
-            this.assets = null;
-            close_yolo();
-            this.executor.shutdownNow();
-        } catch (Exception e) {
-            if (!this.executor.isShutdown()) {
-                this.executor.shutdownNow();
-            }
-//            System.out.println(e.getMessage());
-        }
+        Log.d(TAG, "FlutterVisionPlugin detached from engine");
+        cleanup();
     }
 
     private void setupChannel(Context context, FlutterAssets assets, BinaryMessenger messenger) {
-        OpenCVLoader.initDebug();
-        this.assets = assets;
-        this.context = context;
-        this.methodChannel = new MethodChannel(messenger, CHANNEL_NAME);
-        this.methodChannel.setMethodCallHandler(this);
-        this.executor = Executors.newSingleThreadExecutor();
+        try {
+            // Initialize OpenCV
+            if (!OpenCVLoader.initDebug()) {
+                Log.w(TAG, "OpenCV initialization failed");
+            } else {
+                Log.d(TAG, "OpenCV initialized successfully");
+            }
+            
+            this.assets = assets;
+            this.context = context;
+            this.methodChannel = new MethodChannel(messenger, CHANNEL_NAME);
+            this.methodChannel.setMethodCallHandler(this);
+            this.executor = Executors.newSingleThreadExecutor();
+            
+            Log.d(TAG, "Plugin setup completed");
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting up plugin", e);
+        }
+    }
+
+    private void cleanup() {
+        try {
+            this.context = null;
+            
+            if (this.methodChannel != null) {
+                this.methodChannel.setMethodCallHandler(null);
+                this.methodChannel = null;
+            }
+            
+            this.assets = null;
+            close_yolo();
+            
+            if (this.executor != null && !this.executor.isShutdown()) {
+                this.executor.shutdownNow();
+                this.executor = null;
+            }
+            
+            Log.d(TAG, "Plugin cleanup completed");
+        } catch (Exception e) {
+            Log.e(TAG, "Error during cleanup", e);
+            
+            // Ensure executor is shutdown even if there's an error
+            if (this.executor != null && !this.executor.isShutdown()) {
+                this.executor.shutdownNow();
+            }
+        }
     }
 
     @Override
     public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
-        // Handle method calls from Flutter
-        if (call.method.equals("loadYoloModel")) {
-            try {
-                load_yolo_model((Map) call.arguments);
-                result.success("ok");
-            } catch (Exception e) {
-                result.error("100", "Error on load Yolov5 model", e);
+        try {
+            switch (call.method) {
+                case "loadYoloModel":
+                    loadYoloModel((Map<String, Object>) call.arguments, result);
+                    break;
+                case "yoloOnFrame":
+                    yoloOnFrame((Map<String, Object>) call.arguments, result);
+                    break;
+                case "yoloOnImage":
+                    yoloOnImage((Map<String, Object>) call.arguments, result);
+                    break;
+                case "closeYoloModel":
+                    closeYoloModel(result);
+                    break;
+                case "getSupportedVersions":
+                    result.success(SUPPORTED_VERSIONS);
+                    break;
+                case "getModelInfo":
+                    getModelInfo(result);
+                    break;
+                default:
+                    result.notImplemented();
+                    break;
             }
-        } else if (call.method.equals("yoloOnFrame")) {
-            yolo_on_frame((Map) call.arguments, result);
-        } else if (call.method.equals("yoloOnImage")) {
-            yolo_on_image((Map) call.arguments, result);
-        } else if (call.method.equals("closeYoloModel")) {
-            close_yolo_model(result);
-        }else {
-            result.notImplemented();
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling method call: " + call.method, e);
+            result.error("PLUGIN_ERROR", "Method call failed: " + e.getMessage(), e);
         }
     }
 
-    private void load_yolo_model(Map<String, Object> args) throws Exception {
-        String model = "";
-        final Object is_asset_obj = args.get("isAsset"); 
-        final boolean is_asset = is_asset_obj == null ? false : (boolean) is_asset_obj;
-        String label_path = "";
-        
-        // CORREGIDO: Usar los nombres correctos que envía Dart
-        if(is_asset){
-            model = this.assets.getAssetFilePathByName(args.get("modelPath").toString());
-            label_path = this.assets.getAssetFilePathByName(args.get("labels").toString());
-        }else{
-            model = args.get("modelPath").toString();
-            label_path = args.get("labels").toString();
+    private void loadYoloModel(Map<String, Object> args, Result result) {
+        try {
+            if (args == null) {
+                result.error("INVALID_ARGS", "Arguments cannot be null", null);
+                return;
+            }
+            
+            // Extract and validate parameters
+            String modelPath = getStringArgument(args, "modelPath");
+            String labelPath = getStringArgument(args, "labels");
+            String version = getStringArgument(args, "modelVersion");
+            
+            final boolean isAsset = getBooleanArgument(args, "isAsset", false);
+            final int numThreads = getIntArgument(args, "numThreads", 4);
+            final boolean quantization = getBooleanArgument(args, "quantization", false);
+            final boolean useGpu = getBooleanArgument(args, "useGpu", false);
+            final int rotation = getIntArgument(args, "rotation", 0);
+            
+            // Resolve paths
+            String resolvedModelPath = isAsset ? this.assets.getAssetFilePathByName(modelPath) : modelPath;
+            String resolvedLabelPath = isAsset ? this.assets.getAssetFilePathByName(labelPath) : labelPath;
+            
+            Log.d(TAG, String.format("Loading YOLO model: version=%s, threads=%d, gpu=%b, quantized=%b", 
+                    version, numThreads, useGpu, quantization));
+            
+            // Create appropriate model instance
+            yolo_model = createYoloModel(version, context, resolvedModelPath, isAsset, 
+                    numThreads, quantization, useGpu, resolvedLabelPath, rotation);
+            
+            // Initialize the model
+            yolo_model.initialize_model();
+            
+            Log.d(TAG, "YOLO model loaded successfully: " + version);
+            result.success("Model loaded successfully");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading YOLO model", e);
+            result.error("MODEL_LOAD_ERROR", "Failed to load YOLO model: " + e.getMessage(), e);
         }
-        
-        // CORREGIDO: Usar los nombres correctos que envía Dart
-        final int num_threads = (int) args.get("numThreads");
-        final boolean quantization = (boolean) args.get("quantization");
-        final boolean use_gpu = (boolean) args.get("useGpu");
-        final int rotation = args.get("rotation") != null ? (int) args.get("rotation") : 0;
-        final String version = args.get("modelVersion").toString();
-        
-        switch (version) {
-            case "yolov5": {
-                yolo_model = new Yolov5(
-                        context,
-                        model,
-                        is_asset,
-                        num_threads,
-                        quantization,
-                        use_gpu,
-                        label_path,
-                        rotation);
-                break;
-            }
-            case "yolov8": {
-                yolo_model = new Yolov8(
-                        context,
-                        model,
-                        is_asset,
-                        num_threads,
-                        quantization,
-                        use_gpu,
-                        label_path,
-                        rotation);
-                break;
-            }
-
-            case "yolov8seg": {
-                yolo_model = new Yolov8Seg(
-                        context,
-                        model,
-                        is_asset,
-                        num_threads,
-                        quantization,
-                        use_gpu,
-                        label_path,
-                        rotation);
-                break;
-            }
-            default: {
-                throw new Exception("Model version must be yolov5, yolov8 or yolov8seg");
-            }
-        }
-        yolo_model.initialize_model();
     }
 
-    //https://www.baeldung.com/java-single-thread-executor-service
-    class DetectionTask implements Runnable {
-        //    private static volatile DetectionTasks instance;
-        private Yolo yolo;
-        byte[] image;
+    private Yolo createYoloModel(String version, Context context, String modelPath, boolean isAsset,
+                                int numThreads, boolean quantization, boolean useGpu, 
+                                String labelPath, int rotation) throws Exception {
+        switch (version.toLowerCase()) {
+            case "yolov5":
+                return new Yolov5(context, modelPath, isAsset, numThreads, quantization, useGpu, labelPath, rotation);
+                
+            case "yolov8":
+                return new Yolov8(context, modelPath, isAsset, numThreads, quantization, useGpu, labelPath, rotation);
+                
+            case "yolov8seg":
+                return new Yolov8Seg(context, modelPath, isAsset, numThreads, quantization, useGpu, labelPath, rotation);
+                
+            case "yolo11":
+            case "yolov11":
+                return new Yolo11(context, modelPath, isAsset, numThreads, quantization, useGpu, labelPath, rotation);
+                
+            default:
+                throw new IllegalArgumentException("Unsupported model version: " + version + 
+                        ". Supported versions: " + SUPPORTED_VERSIONS);
+        }
+    }
 
-        List<byte[]> frame;
-        int image_height;
-        int image_width;
-        float iou_threshold;
-        float conf_threshold;
-        float class_threshold;
+    private void yoloOnFrame(Map<String, Object> args, Result result) {
+        if (yolo_model == null) {
+            result.error("MODEL_NOT_LOADED", "YOLO model not loaded", null);
+            return;
+        }
+        
+        if (isDetecting.compareAndSet(false, true)) {
+            DetectionTask detectionTask = new DetectionTask(yolo_model, args, "frame", result, isDetecting);
+            executor.submit(detectionTask);
+        } else {
+            // Return empty result if already detecting
+            result.success(EMPTY_RESULT);
+        }
+    }
 
-        String typing;
-        private Result result;
+    private void yoloOnImage(Map<String, Object> args, Result result) {
+        if (yolo_model == null) {
+            result.error("MODEL_NOT_LOADED", "YOLO model not loaded", null);
+            return;
+        }
+        
+        if (isDetecting.compareAndSet(false, true)) {
+            DetectionTask detectionTask = new DetectionTask(yolo_model, args, "img", result, isDetecting);
+            executor.submit(detectionTask);
+        } else {
+            // Return empty result if already detecting
+            result.success(EMPTY_RESULT);
+        }
+    }
 
-        public DetectionTask(Yolo yolo, Map<String, Object> args, String typing, Result result) {
-            this.typing = typing;
-            this.yolo = yolo;
-            if (typing.equals("img")) {
-                this.image = (byte[]) args.get("bytesList");
+    private void closeYoloModel(Result result) {
+        try {
+            close_yolo();
+            Log.d(TAG, "YOLO model closed successfully");
+            result.success("YOLO model closed successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Error closing YOLO model", e);
+            result.error("MODEL_CLOSE_ERROR", "Failed to close YOLO model: " + e.getMessage(), e);
+        }
+    }
+
+    private void getModelInfo(Result result) {
+        try {
+            if (yolo_model == null) {
+                result.success("No model loaded");
             } else {
-                this.frame = (ArrayList) args.get("bytesList");
+                String info = String.format("Model loaded, rotation: %d", yolo_model.getRotation());
+                result.success(info);
             }
-            // CORREGIDO: Usar los nombres correctos que envía Dart
-            this.image_height = (int) args.get("imageHeight");
-            this.image_width = (int) args.get("imageWidth");
-            this.iou_threshold = (float) (double) (args.get("iouThreshold"));
-            this.conf_threshold = (float) (double) (args.get("confThreshold"));
-            this.class_threshold = (float) (double) (args.get("classThreshold"));
+        } catch (Exception e) {
+            result.error("INFO_ERROR", "Error getting model info: " + e.getMessage(), e);
+        }
+    }
+
+    private void close_yolo() {
+        if (yolo_model != null) {
+            try {
+                yolo_model.close();
+                Log.d(TAG, "YOLO model closed");
+            } catch (Exception e) {
+                Log.e(TAG, "Error closing YOLO model", e);
+            } finally {
+                yolo_model = null;
+            }
+        }
+    }
+
+    // Utility methods for argument extraction
+    private String getStringArgument(Map<String, Object> args, String key) throws IllegalArgumentException {
+        Object value = args.get(key);
+        if (value == null) {
+            throw new IllegalArgumentException("Missing required argument: " + key);
+        }
+        return value.toString();
+    }
+
+    private boolean getBooleanArgument(Map<String, Object> args, String key, boolean defaultValue) {
+        Object value = args.get(key);
+        return value != null ? (Boolean) value : defaultValue;
+    }
+
+    private int getIntArgument(Map<String, Object> args, String key, int defaultValue) {
+        Object value = args.get(key);
+        return value != null ? (Integer) value : defaultValue;
+    }
+
+    /**
+     * Enhanced DetectionTask with better error handling and memory management
+     */
+    private static class DetectionTask implements Runnable {
+        private final Yolo yolo;
+        private final byte[] image;
+        private final List<byte[]> frame;
+        private final int imageHeight;
+        private final int imageWidth;
+        private final float iouThreshold;
+        private final float confThreshold;
+        private final float classThreshold;
+        private final String type;
+        private final Result result;
+        private final AtomicBoolean isDetecting;
+
+        public DetectionTask(Yolo yolo, Map<String, Object> args, String type, 
+                           Result result, AtomicBoolean isDetecting) {
+            this.yolo = yolo;
+            this.type = type;
             this.result = result;
+            this.isDetecting = isDetecting;
+            
+            if ("img".equals(type)) {
+                this.image = (byte[]) args.get("bytesList");
+                this.frame = null;
+            } else {
+                this.frame = (ArrayList<byte[]>) args.get("bytesList");
+                this.image = null;
+            }
+            
+            this.imageHeight = getIntArgument(args, "imageHeight", 0);
+            this.imageWidth = getIntArgument(args, "imageWidth", 0);
+            this.iouThreshold = getFloatArgument(args, "iouThreshold", 0.5f);
+            this.confThreshold = getFloatArgument(args, "confThreshold", 0.5f);
+            this.classThreshold = getFloatArgument(args, "classThreshold", 0.5f);
         }
         
         @Override
         public void run() {
+            Bitmap bitmap = null;
+            ByteBuffer byteBuffer = null;
+            
             try {
-                Bitmap bitmap;
-                if (typing.equals("img")) {
+                // Create bitmap from input
+                if ("img".equals(type)) {
                     bitmap = BitmapFactory.decodeByteArray(image, 0, image.length);
                 } else {
-                    //rotate image, because android take a photo rotating 90 degrees
-                    bitmap = utils.feedInputToBitmap(context, frame, image_height, image_width, yolo.getRotation());
+                    bitmap = utils.feedInputToBitmap(yolo.getContext(), frame, imageHeight, imageWidth, yolo.getRotation());
                 }
+                
+                if (bitmap == null) {
+                    throw new Exception("Failed to create bitmap from input");
+                }
+                
+                // Prepare input tensor
+                // int[] shape = yolo.getInputTensor().shape();
+                // int srcWidth = bitmap.getWidth();
+                // int srcHeight = bitmap.getHeight();
+                
+                // byteBuffer = utils.feedInputTensor(bitmap, shape[1], shape[2], srcWidth, srcHeight, 0, 255);
+
+                // Prepare input tensor with shape validation
                 int[] shape = yolo.getInputTensor().shape();
-                int src_width = bitmap.getWidth();
-                int src_height = bitmap.getHeight();
-                ByteBuffer byteBuffer = utils.feedInputTensor(bitmap, shape[1], shape[2], src_width, src_height, 0, 255);
-                List<Map<String, Object>> detections = yolo.detect_task(byteBuffer, src_height, src_width, iou_threshold, conf_threshold, class_threshold);
-                isDetecting = false;
+                int srcWidth = bitmap.getWidth();
+                int srcHeight = bitmap.getHeight();
+
+                int inputHeight, inputWidth;
+                if (shape.length == 3) {
+                    // Format: [height, width, channels] 
+                    inputHeight = shape[0];
+                    inputWidth = shape[1];
+                } else if (shape.length == 4) {
+                    // Format: [batch, height, width, channels]
+                    inputHeight = shape[1];
+                    inputWidth = shape[2];
+                } else {
+                    throw new Exception("Unsupported tensor shape length: " + shape.length);
+                }
+
+                byteBuffer = utils.feedInputTensor(bitmap, inputWidth, inputHeight, srcWidth, srcHeight, 0, 255);
+                
+                // Run detection
+                List<Map<String, Object>> detections = yolo.detect_task(byteBuffer, srcHeight, srcWidth, 
+                        iouThreshold, confThreshold, classThreshold);
+                
+                Log.d(TAG, String.format("Detection completed: %d objects found", detections.size()));
                 result.success(detections);
+                
             } catch (Exception e) {
-                result.error("100", "Detection Error", e);
+                Log.e(TAG, "Detection task failed", e);
+                result.error("DETECTION_ERROR", "Detection failed: " + e.getMessage(), e);
+            } finally {
+                // Clean up resources
+                utils.safeRecycleBitmap(bitmap);
+                if (byteBuffer != null) {
+                    byteBuffer.clear();
+                }
+                isDetecting.set(false);
             }
         }
-    }
-
-    private void yolo_on_frame(Map<String, Object> args, Result result) {
-        try {
-            if (isDetecting) {
-                result.success(empty);
-            } else {
-                isDetecting = true;
-                DetectionTask detectionTask = new DetectionTask(yolo_model, args, "frame", result);
-                executor.submit(detectionTask);
+        
+        private int getIntArgument(Map<String, Object> args, String key, int defaultValue) {
+            Object value = args.get(key);
+            return value != null ? (Integer) value : defaultValue;
+        }
+        
+        private float getFloatArgument(Map<String, Object> args, String key, float defaultValue) {
+            Object value = args.get(key);
+            if (value instanceof Double) {
+                return ((Double) value).floatValue();
+            } else if (value instanceof Float) {
+                return (Float) value;
             }
-        } catch (Exception e) {
-            result.error("100", "Detection Error", e);
-        }
-    }
-
-    private void yolo_on_image(Map<String, Object> args, Result result) {
-        try {
-            if (isDetecting) {
-                result.success(empty);
-            } else {
-                isDetecting = true;
-                DetectionTask detectionTask = new DetectionTask(yolo_model, args, "img", result);
-                executor.submit(detectionTask);
-            }
-        } catch (Exception e) {
-            result.error("100", "Detection Error", e);
-        }
-    }
-
-    private void close_yolo_model(Result result) {
-        try {
-            close_yolo();
-            result.success("Yolo model closed succesfully");
-        } catch (Exception e) {
-            result.error("100", "Close_yolo_model error", e);
-        }
-    }
-
-    private void close_yolo(){
-        if (yolo_model != null) {
-            yolo_model.close();
-            yolo_model = null;
+            return defaultValue;
         }
     }
 }

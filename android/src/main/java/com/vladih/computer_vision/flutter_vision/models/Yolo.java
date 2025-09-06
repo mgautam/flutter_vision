@@ -59,6 +59,10 @@ public class Yolo {
         this.rotation = rotation;
     }
 
+    public Context getContext() {
+        return this.context;
+    }
+
     public int getRotation() {
         return this.rotation;
     }
