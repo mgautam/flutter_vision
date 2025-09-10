@@ -4,6 +4,27 @@ import 'package:flutter_vision/src/plugin/base_flutter_vision.dart';
 
 class AndroidFlutterVision extends BaseFlutterVision implements FlutterVision {
   @override
+  Future<Map<String, dynamic>> frameToImage({
+    required List<Uint8List> bytesList,
+    required int imageHeight,
+    required int imageWidth,
+    required int rotation,
+  }) async {
+    try {
+      final dynamic result = await channel.invokeMethod('frameToImage', {
+        'bytesList': bytesList,
+        'imageHeight': imageHeight,
+        'imageWidth': imageWidth,
+        'rotation': rotation
+      });
+
+      return Map<String, dynamic>.from(result);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> loadYoloModel({
     required String modelPath,
     required String labels,

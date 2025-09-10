@@ -16,6 +16,29 @@ abstract class FlutterVision {
     }
   }
 
+  ///frameToImage accept a byte List as input and
+  ///return a Map<String, dynamic>.
+  ///
+  ///where map is mapped as follow:
+  ///
+  ///```Map<String, dynamic>:{
+  ///    "bytes": Uint8List,
+  ///    "imageHeight": int,
+  ///    "imageWidth": int,
+  ///    "rotation": int,
+  /// }```
+  ///
+  ///args: [bytesList] - image as byte list
+  ///, [imageHeight] - image height
+  ///, [imageWidth] - image width
+  ///, [rotation] - image rotation
+  Future<Map<String, dynamic>> frameToImage({
+    required List<Uint8List> bytesList,
+    required int imageHeight,
+    required int imageWidth,
+    required int rotation,
+  });
+
   ///loadYoloModel: load YOLOv5 model from the assets folder
   ///
   /// args: [modelPath] - path to the model file

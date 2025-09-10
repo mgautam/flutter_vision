@@ -41,6 +41,12 @@ abstract class BaseFlutterVision {
   //     }
   //   }
   // }
+  Future<Map<String, dynamic>> frameToImage({
+    required List<Uint8List> bytesList,
+    required int imageHeight,
+    required int imageWidth,
+    required int rotation,
+  });
 
   Future<void> loadYoloModel({
     required String modelPath,

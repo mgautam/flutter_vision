@@ -20,6 +20,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,6 +46,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
     private Yolo yolo_model;
     private ExecutorService executor;
     
+    private final AtomicBoolean isConverting = new AtomicBoolean(false);
     private final AtomicBoolean isDetecting = new AtomicBoolean(false);
     private static final ArrayList<Map<String, Object>> EMPTY_RESULT = new ArrayList<>();
 
@@ -113,6 +115,9 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
     public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
         try {
             switch (call.method) {
+                case "frameToImage":
+                    frameToImage((Map<String, Object>) call.arguments, result);
+                    break;
                 case "loadYoloModel":
                     loadYoloModel((Map<String, Object>) call.arguments, result);
                     break;
@@ -202,6 +207,16 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
             default:
                 throw new IllegalArgumentException("Unsupported model version: " + version + 
                         ". Supported versions: " + SUPPORTED_VERSIONS);
+        }
+    }
+
+    private void frameToImage(Map<String, Object> args, Result result) {        
+        if (isConverting.compareAndSet(false, true)) {
+            ConversionTask conversionTask = new ConversionTask(this.context, this.isConverting, args, result);
+            executor.submit(conversionTask);
+        } else {
+            // Return empty result if already converting
+            result.success(EMPTY_RESULT);
         }
     }
 
@@ -406,6 +421,85 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
                 return (Float) value;
             }
             return defaultValue;
+        }
+    }
+
+
+
+    /**
+     * ConversionTask
+     */
+    private static class ConversionTask implements Runnable {
+        private final Context context;
+        private final AtomicBoolean isConverting;
+        private final byte[] image;
+        private final List<byte[]> frame;
+        private final int imageHeight;
+        private final int imageWidth;
+        private final Result result;
+        private final int rotation;// = 0;//0 degrees
+
+        public ConversionTask(Context context, AtomicBoolean isConverting, Map<String, Object> args, Result result) {
+            this.context = context;
+            this.isConverting = isConverting;
+            this.result = result;
+            this.frame = (ArrayList<byte[]>) args.get("bytesList");
+            this.image = null;            
+            this.imageHeight = getIntArgument(args, "imageHeight", 0);
+            this.imageWidth = getIntArgument(args, "imageWidth", 0);
+            this.rotation = getIntArgument(args, "rotation", 0);
+        }
+        
+        @Override
+        public void run() {
+            Bitmap bitmap = null;
+            ByteBuffer byteBuffer = null;
+            
+            try {
+                // Create bitmap from input
+                bitmap = utils.feedInputToBitmap(this.context, frame, imageHeight, imageWidth, this.rotation);
+                
+                if (bitmap == null) {
+                    throw new Exception("Failed to create bitmap from input");
+                }
+                
+                // Calculate the number of bytes needed for the buffer
+                int bytes = bitmap.getByteCount();
+
+                // Allocate a new ByteBuffer
+                byteBuffer = ByteBuffer.allocate(bytes);
+
+                // Copy the pixel data from the Bitmap to the ByteBuffer
+                bitmap.copyPixelsToBuffer(byteBuffer);
+
+                // Reset the buffer's position to the beginning for reading
+                byteBuffer.rewind();
+                
+                Log.d(TAG, String.format("Conversion completed: %d bytes produced", bytes));
+
+                Map<String, Object> output = new HashMap<>();
+                output.put("bytes", byteBuffer.array());
+                output.put("imageHeight", imageHeight);
+                output.put("imageWidth", imageWidth);
+
+                result.success(output);
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Conversion task failed", e);
+                result.error("CONVERSION_ERROR", "Conversion failed: " + e.getMessage(), e);
+            } finally {
+                // Clean up resources
+                utils.safeRecycleBitmap(bitmap);
+                if (byteBuffer != null) {
+                    byteBuffer.clear();
+                }
+                isConverting.set(false);
+            }
+        }
+        
+        private int getIntArgument(Map<String, Object> args, String key, int defaultValue) {
+            Object value = args.get(key);
+            return value != null ? (Integer) value : defaultValue;
         }
     }
 }
