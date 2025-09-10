@@ -3,6 +3,8 @@ package com.vladih.computer_vision.flutter_vision;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Bitmap.CompressFormat;
+import java.io.ByteArrayOutputStream;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -453,7 +455,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
         @Override
         public void run() {
             Bitmap bitmap = null;
-            ByteBuffer byteBuffer = null;
+            ByteArrayOutputStream bos = null;
             
             try {
                 // Create bitmap from input
@@ -463,36 +465,27 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
                     throw new Exception("Failed to create bitmap from input");
                 }
                 
-                // Calculate the number of bytes needed for the buffer
-                int bytes = bitmap.getByteCount();
-
-                // Allocate a new ByteBuffer
-                byteBuffer = ByteBuffer.allocate(bytes);
-
-                // Copy the pixel data from the Bitmap to the ByteBuffer
-                bitmap.copyPixelsToBuffer(byteBuffer);
-
-                // Reset the buffer's position to the beginning for reading
-                byteBuffer.rewind();
+                bos = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, bos);
                 
-                Log.d(TAG, String.format("Conversion completed: %d bytes produced", bytes));
+                Log.d(TAG, String.format("Conversion completed"));
 
                 Map<String, Object> output = new HashMap<>();
-                output.put("bytes", byteBuffer.array());
+                output.put("bytes", bos.toByteArray());
                 output.put("imageHeight", imageHeight);
                 output.put("imageWidth", imageWidth);
 
                 result.success(output);
                 
+                if (bos != null) {
+                    bos.close();
+                }
             } catch (Exception e) {
                 Log.e(TAG, "Conversion task failed", e);
                 result.error("CONVERSION_ERROR", "Conversion failed: " + e.getMessage(), e);
             } finally {
                 // Clean up resources
                 utils.safeRecycleBitmap(bitmap);
-                if (byteBuffer != null) {
-                    byteBuffer.clear();
-                }
                 isConverting.set(false);
             }
         }
