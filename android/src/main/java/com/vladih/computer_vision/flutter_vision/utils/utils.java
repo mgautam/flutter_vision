@@ -16,7 +16,7 @@ import java.util.List;
 
 public class utils {
     private static final String TAG = "YOLOUtils";
-    
+    private static final int rowStride = 768;
     /**
      * Crop bitmap with improved bounds checking and error handling
      */
@@ -166,10 +166,47 @@ public class utils {
             }
             
             // Copy YUV data to single array (NV21 format: Y + V + U)
-            byte[] nv21Data = new byte[Yb + Ub + Vb];
+            /*byte[] nv21Data = new byte[Yb + Ub + Vb];
             System.arraycopy(bytesList.get(0), 0, nv21Data, 0, Yb);
             System.arraycopy(bytesList.get(2), 0, nv21Data, Yb, Vb);        // V plane
-            System.arraycopy(bytesList.get(1), 0, nv21Data, Yb + Vb, Ub);   // U plane
+            System.arraycopy(bytesList.get(1), 0, nv21Data, Yb + Vb, Ub);   // U plane*/
+
+            final int frameSize = imageHeight * imageWidth;
+            byte[] nv21Data = new byte[(frameSize / 2)*3];
+
+            byte[] yarr = bytesList.get(0);
+            byte[] uarr = bytesList.get(1);
+            byte[] varr = bytesList.get(2);
+
+            for (int y = 0; y < imageHeight; y++) {
+                System.arraycopy(yarr, y*rowStride, nv21Data, y*imageWidth, imageWidth);
+            }
+            
+            final int frameHalfSize = (frameSize >> 1);
+            final int imgHalfHeight = (imageHeight >> 1);
+            final int imgHalfWidth = (imageWidth >> 1);
+            final int rowHalfStride = (rowStride >> 1);
+            /*for (int y = 0; y < imgHalfHeight; y++) {
+                for (int x = 0; x < imgHalfWidth; x++) {
+                    nv21Data[frameSize + y*imageWidth + (x<<1)] = (byte)255;//V=Cr
+                    nv21Data[frameSize + y*imageWidth + ((x<<1)+1)] = (byte)128;//U=Cb 
+                }
+            }*/
+            for (int y = 0; y < imgHalfHeight; y++) {
+                for (int x = 0; x < imgHalfWidth/2; x++) {
+                    if (((y<<1)*rowHalfStride+(x<<1)) <  Ub){
+                        nv21Data[frameSize + y*imageWidth + (x<<2)] = varr[(y<<1)*rowHalfStride+(x<<1)];//V=Cr
+                        nv21Data[frameSize + y*imageWidth + ((x<<2)+1)] = uarr[(y<<1)*rowHalfStride+(x<<1)];//U=Cb
+                        nv21Data[frameSize + y*imageWidth + ((x<<2)+2)] = varr[(y<<1)*rowHalfStride+(x<<1)];//V=Cr
+                        nv21Data[frameSize + y*imageWidth + ((x<<2)+3)] = uarr[(y<<1)*rowHalfStride+(x<<1)];//U=Cb
+                    } else {
+                        nv21Data[frameSize + y*imageWidth + (x<<2)] = (byte)128; //V 
+                        nv21Data[frameSize + y*imageWidth + ((x<<2)+1)] = (byte)128;//U 
+                        nv21Data[frameSize + y*imageWidth + ((x<<2)+2)] = (byte)128; //V 
+                        nv21Data[frameSize + y*imageWidth + ((x<<2)+3)] = (byte)128;//U 
+                    }
+                }
+            }
             
             // Convert NV21 to RGB bitmap
             bitmapRaw = RenderScriptHelper.getBitmapFromNV21(context, nv21Data, imageWidth, imageHeight);
