@@ -317,6 +317,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
         private final List<byte[]> frame;
         private final int imageHeight;
         private final int imageWidth;
+        private final int imageRotation;
         private final float iouThreshold;
         private final float confThreshold;
         private final float classThreshold;
@@ -341,6 +342,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
             
             this.imageHeight = getIntArgument(args, "imageHeight", 0);
             this.imageWidth = getIntArgument(args, "imageWidth", 0);
+            this.imageRotation = getIntArgument(args, "imageRotation", 0);
             this.iouThreshold = getFloatArgument(args, "iouThreshold", 0.5f);
             this.confThreshold = getFloatArgument(args, "confThreshold", 0.5f);
             this.classThreshold = getFloatArgument(args, "classThreshold", 0.5f);
@@ -356,7 +358,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
                 if ("img".equals(type)) {
                     bitmap = BitmapFactory.decodeByteArray(image, 0, image.length);
                 } else {
-                    bitmap = utils.feedInputToBitmap(yolo.getContext(), frame, imageHeight, imageWidth, yolo.getRotation());
+                    bitmap = utils.feedInputToBitmap(yolo.getContext(), frame, imageHeight, imageWidth, imageRotation);//yolo.getRotation());
                 }
                 
                 if (bitmap == null) {
