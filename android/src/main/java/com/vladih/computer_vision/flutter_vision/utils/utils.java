@@ -172,38 +172,43 @@ public class utils {
             System.arraycopy(bytesList.get(1), 0, nv21Data, Yb + Vb, Ub);   // U plane*/
 
             final int frameSize = imageHeight * imageWidth;
-            byte[] nv21Data = new byte[(frameSize / 2)*3];
+            final int frameHalfSize = (frameSize >> 1);
+            byte[] nv21Data = new byte[frameHalfSize*3];
 
             byte[] yarr = bytesList.get(0);
             byte[] uarr = bytesList.get(1);
             byte[] varr = bytesList.get(2);
 
+            /*for (int y = 0; y < imageHeight; y++) {
+                for (int x = 0; x < imageWidth; x++) {
+                    nv21Data[y*imageWidth + x] = (byte)128;//Y
+                }
+            }*/
             for (int y = 0; y < imageHeight; y++) {
                 System.arraycopy(yarr, y*rowStride, nv21Data, y*imageWidth, imageWidth);
             }
-            
-            final int frameHalfSize = (frameSize >> 1);
+
             final int imgHalfHeight = (imageHeight >> 1);
             final int imgHalfWidth = (imageWidth >> 1);
             final int rowHalfStride = (rowStride >> 1);
+            int srcindex,destindex;
             /*for (int y = 0; y < imgHalfHeight; y++) {
                 for (int x = 0; x < imgHalfWidth; x++) {
-                    nv21Data[frameSize + y*imageWidth + (x<<1)] = (byte)255;//V=Cr
-                    nv21Data[frameSize + y*imageWidth + ((x<<1)+1)] = (byte)128;//U=Cb 
+                    destindex = frameSize + ((y*imageWidth)+(x<<1));
+                    nv21Data[destindex] = (byte)128;//V=Cr
+                    nv21Data[destindex+1] = (byte)128;//U=Cb 
                 }
             }*/
             for (int y = 0; y < imgHalfHeight; y++) {
-                for (int x = 0; x < imgHalfWidth/2; x++) {
-                    if (((y<<1)*rowHalfStride+(x<<1)) <  Ub){
-                        nv21Data[frameSize + y*imageWidth + (x<<2)] = varr[(y<<1)*rowHalfStride+(x<<1)];//V=Cr
-                        nv21Data[frameSize + y*imageWidth + ((x<<2)+1)] = uarr[(y<<1)*rowHalfStride+(x<<1)];//U=Cb
-                        nv21Data[frameSize + y*imageWidth + ((x<<2)+2)] = varr[(y<<1)*rowHalfStride+(x<<1)];//V=Cr
-                        nv21Data[frameSize + y*imageWidth + ((x<<2)+3)] = uarr[(y<<1)*rowHalfStride+(x<<1)];//U=Cb
+                for (int x = 0; x < imgHalfWidth; x++) {
+                    srcindex = ((y<<1)*rowHalfStride)+(x<<1);
+                    destindex = frameSize + ((y*imageWidth)+(x<<1));
+                    if (srcindex <  Ub) {
+                        nv21Data[destindex] = varr[srcindex];//V=Cr
+                        nv21Data[destindex+1] = uarr[srcindex];//U=Cb
                     } else {
-                        nv21Data[frameSize + y*imageWidth + (x<<2)] = (byte)128; //V 
-                        nv21Data[frameSize + y*imageWidth + ((x<<2)+1)] = (byte)128;//U 
-                        nv21Data[frameSize + y*imageWidth + ((x<<2)+2)] = (byte)128; //V 
-                        nv21Data[frameSize + y*imageWidth + ((x<<2)+3)] = (byte)128;//U 
+                        nv21Data[destindex] = (byte)128; //V
+                        nv21Data[destindex+1] = (byte)128;//U
                     }
                 }
             }
