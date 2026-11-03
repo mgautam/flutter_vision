@@ -114,6 +114,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
         try {
             switch (call.method) {
@@ -325,6 +326,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
         private final Result result;
         private final AtomicBoolean isDetecting;
 
+        @SuppressWarnings("unchecked")
         public DetectionTask(Yolo yolo, Map<String, Object> args, String type, 
                            Result result, AtomicBoolean isDetecting) {
             this.yolo = yolo;
@@ -443,6 +445,7 @@ public class FlutterVisionPlugin implements FlutterPlugin, MethodCallHandler {
         private final Result result;
         private final int rotation;// = 0;//0 degrees
 
+        @SuppressWarnings("unchecked")
         public ConversionTask(Context context, AtomicBoolean isConverting, Map<String, Object> args, Result result) {
             this.context = context;
             this.isConverting = isConverting;
