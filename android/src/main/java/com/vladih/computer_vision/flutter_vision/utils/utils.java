@@ -133,6 +133,73 @@ public class utils {
     }
 
     /**
+     * Pack three YUV_420_888 planes (Y, U, V) into a single NV21 buffer
+     */
+    private static byte[] yuv420PlanesToNv21(List<byte[]> bytesList, int imageHeight, int imageWidth) {
+        // Get Y, U, V plane sizes
+        int Yb = bytesList.get(0).length;
+        int Ub = bytesList.get(1).length;
+        int Vb = bytesList.get(2).length;
+        
+        Log.d(TAG, String.format("YUV plane sizes: Y=%d, U=%d, V=%d", Yb, Ub, Vb));
+        
+        // Validate plane sizes
+        int expectedSize = imageWidth * imageHeight;
+        if (Yb != expectedSize) {
+            Log.w(TAG, String.format("Y plane size mismatch: expected=%d, actual=%d", expectedSize, Yb));
+        }
+        
+        // Copy YUV data to single array (NV21 format: Y + V + U)
+        /*byte[] nv21Data = new byte[Yb + Ub + Vb];
+        System.arraycopy(bytesList.get(0), 0, nv21Data, 0, Yb);
+        System.arraycopy(bytesList.get(2), 0, nv21Data, Yb, Vb);        // V plane
+        System.arraycopy(bytesList.get(1), 0, nv21Data, Yb + Vb, Ub);   // U plane*/
+
+        final int frameSize = imageHeight * imageWidth;
+        final int frameHalfSize = (frameSize >> 1);
+        byte[] nv21Data = new byte[frameHalfSize*3];
+
+        byte[] yarr = bytesList.get(0);
+        byte[] uarr = bytesList.get(1);
+        byte[] varr = bytesList.get(2);
+
+        /*for (int y = 0; y < imageHeight; y++) {
+            for (int x = 0; x < imageWidth; x++) {
+                nv21Data[y*imageWidth + x] = (byte)128;//Y
+            }
+        }*/
+        for (int y = 0; y < imageHeight; y++) {
+            System.arraycopy(yarr, y*rowStride, nv21Data, y*imageWidth, imageWidth);
+        }
+
+        final int imgHalfHeight = (imageHeight >> 1);
+        final int imgHalfWidth = (imageWidth >> 1);
+        final int rowHalfStride = (rowStride >> 1);
+        int srcindex,destindex;
+        /*for (int y = 0; y < imgHalfHeight; y++) {
+            for (int x = 0; x < imgHalfWidth; x++) {
+                destindex = frameSize + ((y*imageWidth)+(x<<1));
+                nv21Data[destindex] = (byte)128;//V=Cr
+                nv21Data[destindex+1] = (byte)128;//U=Cb 
+            }
+        }*/
+        for (int y = 0; y < imgHalfHeight; y++) {
+            for (int x = 0; x < imgHalfWidth; x++) {
+                srcindex = ((y<<1)*rowHalfStride)+(x<<1);
+                destindex = frameSize + ((y*imageWidth)+(x<<1));
+                if (srcindex <  Ub) {
+                    nv21Data[destindex] = varr[srcindex];//V=Cr
+                    nv21Data[destindex+1] = uarr[srcindex];//U=Cb
+                } else {
+                    nv21Data[destindex] = (byte)128; //V
+                    nv21Data[destindex+1] = (byte)128;//U
+                }
+            }
+        }
+        return nv21Data;
+    }
+
+    /**
      * Convert YUV420 bytes to bitmap with improved memory management
      */
     public static Bitmap feedInputToBitmap(Context context,
@@ -144,7 +211,7 @@ public class utils {
             throw new IllegalArgumentException("Context cannot be null");
         }
         
-        if (bytesList == null || bytesList.size() < 3) {
+        if (bytesList == null || (bytesList.size() != 1 && bytesList.size() < 3)) {
             throw new IllegalArgumentException("Invalid YUV bytes list");
         }
         
@@ -152,65 +219,17 @@ public class utils {
         Bitmap rotatedBitmap = null;
         
         try {
-            // Get Y, U, V plane sizes
-            int Yb = bytesList.get(0).length;
-            int Ub = bytesList.get(1).length;
-            int Vb = bytesList.get(2).length;
-            
-            Log.d(TAG, String.format("YUV plane sizes: Y=%d, U=%d, V=%d", Yb, Ub, Vb));
-            
-            // Validate plane sizes
-            int expectedSize = imageWidth * imageHeight;
-            if (Yb != expectedSize) {
-                Log.w(TAG, String.format("Y plane size mismatch: expected=%d, actual=%d", expectedSize, Yb));
-            }
-            
-            // Copy YUV data to single array (NV21 format: Y + V + U)
-            /*byte[] nv21Data = new byte[Yb + Ub + Vb];
-            System.arraycopy(bytesList.get(0), 0, nv21Data, 0, Yb);
-            System.arraycopy(bytesList.get(2), 0, nv21Data, Yb, Vb);        // V plane
-            System.arraycopy(bytesList.get(1), 0, nv21Data, Yb + Vb, Ub);   // U plane*/
-
-            final int frameSize = imageHeight * imageWidth;
-            final int frameHalfSize = (frameSize >> 1);
-            byte[] nv21Data = new byte[frameHalfSize*3];
-
-            byte[] yarr = bytesList.get(0);
-            byte[] uarr = bytesList.get(1);
-            byte[] varr = bytesList.get(2);
-
-            /*for (int y = 0; y < imageHeight; y++) {
-                for (int x = 0; x < imageWidth; x++) {
-                    nv21Data[y*imageWidth + x] = (byte)128;//Y
+            final int frameSize = imageWidth * imageHeight;
+            byte[] nv21Data;
+            if (bytesList.size() == 1) {
+                // camera_android_camerax >= 0.6.21 delivers ImageFormatGroup.nv21 as a single packed NV21 plane
+                nv21Data = bytesList.get(0);
+                if (nv21Data.length < frameSize * 3 / 2) {
+                    throw new IllegalArgumentException(String.format(
+                            "NV21 plane too small: expected=%d, actual=%d", frameSize * 3 / 2, nv21Data.length));
                 }
-            }*/
-            for (int y = 0; y < imageHeight; y++) {
-                System.arraycopy(yarr, y*rowStride, nv21Data, y*imageWidth, imageWidth);
-            }
-
-            final int imgHalfHeight = (imageHeight >> 1);
-            final int imgHalfWidth = (imageWidth >> 1);
-            final int rowHalfStride = (rowStride >> 1);
-            int srcindex,destindex;
-            /*for (int y = 0; y < imgHalfHeight; y++) {
-                for (int x = 0; x < imgHalfWidth; x++) {
-                    destindex = frameSize + ((y*imageWidth)+(x<<1));
-                    nv21Data[destindex] = (byte)128;//V=Cr
-                    nv21Data[destindex+1] = (byte)128;//U=Cb 
-                }
-            }*/
-            for (int y = 0; y < imgHalfHeight; y++) {
-                for (int x = 0; x < imgHalfWidth; x++) {
-                    srcindex = ((y<<1)*rowHalfStride)+(x<<1);
-                    destindex = frameSize + ((y*imageWidth)+(x<<1));
-                    if (srcindex <  Ub) {
-                        nv21Data[destindex] = varr[srcindex];//V=Cr
-                        nv21Data[destindex+1] = uarr[srcindex];//U=Cb
-                    } else {
-                        nv21Data[destindex] = (byte)128; //V
-                        nv21Data[destindex+1] = (byte)128;//U
-                    }
-                }
+            } else {
+                nv21Data = yuv420PlanesToNv21(bytesList, imageHeight, imageWidth);
             }
             
             // Convert NV21 to RGB bitmap
